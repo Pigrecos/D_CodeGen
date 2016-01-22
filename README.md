@@ -4,6 +4,7 @@ Assembly Code Generator
 * Porting of a part of the [Nasm -The Netwide Assembler](http://www.nasm.us/) in Delphi.
 * Porting Only Nasm Code Generator 
 * Using Nasm and Masm Syntax
+* Support all Nasm Instruction Set [List](http://www.nasm.us/doc/nasmdocb.html)
 
 ### TODO List ###
 * jcc label

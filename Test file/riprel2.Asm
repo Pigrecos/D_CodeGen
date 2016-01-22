@@ -1,0 +1,7 @@
+
+bits 64
+mov dword [rel 0x26],0x12345678
+mov qword [rel 0x26],0x12345678
+mov [rel 0x26],rax
+mov dword [rel 0x26],0x12345678
+         

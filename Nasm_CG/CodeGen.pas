@@ -255,16 +255,22 @@ var
   //len : Integer;
   stmp,stmp1     : AnsiString;
   pTmp    : PAnsiChar;
-  isLea   : Boolean;
+  isLea,
+  isRip   : Boolean;
 
 begin
      //len  :=  System.AnsiStrings.StrLen(sCmd);
      stmp := '';
      isLea:= False;
+     isRip:= False;
 
      while sCmd^ <> #0 do
      begin
-        if System.AnsiStrings.StrLIComp(sCmd, 'lea ', 3) = 0 then //caso lea
+	    if System.AnsiStrings.StrLIComp(sCmd, 'rip ', 3) = 0 then //caso rip
+        begin
+            isRip := True;
+        end
+        else if System.AnsiStrings.StrLIComp(sCmd, 'lea ', 3) = 0 then //caso lea
         begin
             isLea := True;
         end
@@ -320,6 +326,10 @@ begin
         stmp := stmp + sCmd^;
         Inc(sCmd);
      end;
+     // rip support
+     if isRip then
+       stmp := StringReplace(stmp,'rip ','rel ',[rfReplaceAll]);
+
      pTmp := PAnsiChar(AnsiString(stmp)) ;
      stmp1:= '';
 

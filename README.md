@@ -1,5 +1,5 @@
 # DCodeGen
-Assembly Code Generator
+Assembly Code Generator(Compiler File or Single asm Command)
 
 * Porting of a part of the [Nasm -The Netwide Assembler](http://www.nasm.us/) in Delphi.
 * Porting Only Nasm Code Generator 

@@ -36,7 +36,7 @@ eval_hints  = record
     tipo: Integer;
 end;
 
-type TexprFun =  reference to function: Aexpr;
+type TexprFun =  reference to function(Critical: Integer): Aexpr;
 
 const
   (*
@@ -51,7 +51,7 @@ const
  EXPR_RDSAE      = EXPR_REG_END+4;
  EXPR_SEGBASE    = EXPR_REG_END+5;
 
- function evaluate(sc: TScanner; tv: PTTokenVal; fwref: Integer; hints: Peval_hints): Aexpr;
+ function evaluate(sc: TScanner; tv: PTTokenVal; fwref,Critical: Integer; hints: Peval_hints): Aexpr;
  function is_just_unknown(vvect: PAexpr) : Boolean;
  function is_reloc(vvect: PAexpr): Boolean;
  function reloc_value(vvect: PAexpr): Int64;
@@ -59,8 +59,8 @@ const
  function reloc_wrt(vvect: PAexpr): int32;
  function is_simple(vvect: PAexpr) : Boolean;
 
- function expr5: Aexpr;
- function expr6: Aexpr;
+ function expr5(Critical: Integer): Aexpr;
+ function expr6(Critical: Integer): Aexpr;
 
  var
   tokval_ex  : PTTokenVal; (* The current token *)
@@ -527,12 +527,12 @@ begin
     end;
 end;
 
-function expr4: Aexpr ;
+function expr4(Critical: Integer): Aexpr ;
 var
   e, f : Aexpr;
   j    : Integer;
 begin
-    e := expr5;
+    e := expr5(Critical);
     if Length(e) = 0 then
     begin
         SetLength(Result,0);
@@ -542,7 +542,7 @@ begin
     begin
         j     := i_Tok;
         i_Tok := scan(tokval_ex^);
-        f     := expr5;
+        f     := expr5(Critical);
         if Length(f) = 0 then
         begin
             SetLength(Result,0);
@@ -556,13 +556,13 @@ begin
     Result := e;
 end;
 
-function expr5: Aexpr;
+function expr5(Critical: Integer): Aexpr;
 var
   e, f : Aexpr;
   j    : Integer;
 begin
 
-    e := expr6;
+    e := expr6(Critical);
     if Length(e) = 0 then
     begin
         SetLength(Result,0);
@@ -572,7 +572,7 @@ begin
     begin
         j     := i_Tok;
         i_Tok := scan(tokval_ex^);
-        f     := expr6;
+        f     := expr6(Critical);
         if Length(f) = 0 then
         begin
             SetLength(Result,0);
@@ -595,17 +595,19 @@ begin
 end;
 
 
-function expr6: Aexpr;
+function expr6(Critical: Integer): Aexpr;
 var
-  e : Aexpr;
-
+  e        : Aexpr;
+  tipo,
+  label_seg: Integer;
+  label_ofs: UInt64;
 begin
 
     case i_Tok of
      Ord('-'):
              begin
                  i_Tok := scan(tokval_ex^);
-                 e     := expr6;
+                 e     := expr6(Critical);
 
                  if Length(e) = 0 then
                  begin
@@ -618,7 +620,7 @@ begin
      Ord('+'):
              begin
                  i_Tok  := scan(tokval_ex^);
-                 Result := expr6;
+                 Result := expr6(Critical);
              end;
      TOKEN_NUM,
      TOKEN_REG,
@@ -641,9 +643,30 @@ begin
                          TOKEN_ID,
                          TOKEN_INSN:
                                   begin
-                                       nasm_errore(ERR_NONFATAL, '($) Symbol Declaration or Instruction labeling Not Supportated!!');
-                                       SetLength(Result,0);
-                                       Exit;
+                                       tipo := EXPR_SIMPLE;
+                                       if not lab.lookup_label(tokval_ex^.t_charptr,label_seg,label_ofs) then
+                                       begin
+                                           if (critical = 2) then
+                                           begin
+                                              nasm_errore(ERR_NONFATAL, 'symbol '+ tokval_ex^.t_charptr + ' undefined');
+                                              SetLength(Result,0);
+                                              Exit;
+                                           end
+                                           else if (critical = 1) then
+                                           begin
+                                                nasm_errore(ERR_NONFATAL, 'symbol not defined before use :'+ tokval_ex^.t_charptr );
+                                                SetLength(Result,0);
+                                                Exit;
+                                           end else
+                                           begin
+                                               if opflags <> 0 then
+                                                      opflags := opflags or OPFLAG_FORWARD;
+                                               tipo      := EXPR_UNKNOWN;
+                                               label_seg := NO_SEG;
+                                               label_ofs := 1;
+                                           end;
+                                       end;
+                                       addtotemp(tipo, label_ofs);
                                   end;
                          TOKEN_DECORATOR: addtotemp(EXPR_RDSAE, tokval_ex^.t_integer);
 
@@ -662,7 +685,7 @@ end;
 (*
  * The evaluator itself.
  *)
-function evaluate(sc: TScanner; tv: PTTokenVal; fwref: Integer; hints: Peval_hints): Aexpr;
+function evaluate(sc: TScanner; tv: PTTokenVal; fwref,Critical: Integer; hints: Peval_hints): Aexpr;
 var
   e,f  : Aexpr;
   g    : Aexpr;
@@ -684,7 +707,7 @@ begin
         i_Tok := tokval_ex^.t_type;
 
 
-    e := bexpr;
+    e := bexpr(Critical);
     if Length(e) = 0 then
     begin
         SetLength(Result,0);
@@ -694,7 +717,7 @@ begin
     if (i_Tok = TOKEN_WRT) then
     begin
         i_Tok := scan(tokval_ex^);       (* eat the WRT *)
-        f     := expr6;
+        f     := expr6(Critical);
         if Length(f) = 0 then
         begin
              SetLength(Result,0);

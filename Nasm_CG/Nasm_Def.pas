@@ -2,7 +2,8 @@ unit Nasm_Def;
 
 interface
     uses
-      OpFlags;
+      OpFlags,
+      Labels;
 
 const
   IDLEN_MAX   = 4096;
@@ -401,9 +402,16 @@ type
    end;
    PTTokenVal = ^TTokenVal;
 
- type
+ TLocation = record
+    offset : UInt64;
+    segment: Int32;
+    known  : Boolean;
+ end;
+
  TScanner = Reference to function(var tv: TTokenVal): Integer;
  TLogMsg  = Reference to procedure(Severity : Integer; strMsg : string);
+
+ TLDEF = Reference to procedure(llabel: PAnsiChar; segment: int32; offset: UInt64);
 
  TOutCmdB = array of Byte;
  type
@@ -412,6 +420,11 @@ type
     Bytes  : TOutCmdB;               // Byte dell'istruzione
 end;
 TTAssembled = array of TAssembled;
+
+var
+ Location              : TLocation;
+ Global_offset_changed : UInt64;
+ lab                   : TLab ;
 
 implementation
 

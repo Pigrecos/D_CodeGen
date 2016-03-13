@@ -5,7 +5,7 @@ interface
 uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes, Vcl.Graphics,
   Vcl.Controls, Vcl.Forms, Vcl.Dialogs,
-  Vcl.StdCtrls, Vcl.Buttons, Vcl.ExtCtrls,System.Diagnostics,System.TimeSpan,
+  NasmLib, Vcl.StdCtrls, Vcl.Buttons, Vcl.ExtCtrls,System.Diagnostics,System.TimeSpan,
   System.Win.Crtl, Vcl.ComCtrls,  AdvListV;
 
 type
@@ -32,11 +32,13 @@ type
     rgCPU: TRadioGroup;
     Label1: TLabel;
     lstDecFile: TAdvListView;
+    BitBtn3: TBitBtn;
     procedure btnAsmClick(Sender: TObject);
     procedure btnSaveAsmClick(Sender: TObject);
     procedure btnDumpBInClick(Sender: TObject);
     procedure btnBinToASmClick(Sender: TObject);
     procedure BitBtn1Click(Sender: TObject);
+    procedure BitBtn3Click(Sender: TObject);
   private
     procedure ParserLogMsg(Severity: Integer; strMsg: string);
     procedure Decompila(buffer  : TArray<Byte> ;VAAddr: UInt64;bits : Byte );
@@ -53,7 +55,6 @@ implementation
       uses
         Nasm_Def,
         Parser,
-        NasmLib,
         untStdScan,
         untCrc64,
         CodeGen,
@@ -114,6 +115,55 @@ end;
 procedure TfrmMain.BitBtn1Click(Sender: TObject);
 begin
     lvAsm.LoadFromFile('Codice__.txt')
+end;
+
+procedure TfrmMain.BitBtn3Click(Sender: TObject);
+var
+  sFile   : string;
+  CG      : TCodeGen;
+  AsmOut  : TTAssembled;
+  BinArray: TArray<Byte> ;
+  i,j     : Integer;
+  StartOfs: UInt64;
+begin
+     OpenDialog1.InitialDir := ExtractFileDir(Application.ExeName)+'\test';
+     OpenDialog1.Filter     := 'Asm files (*.Asm)|*.ASM';
+     if OpenDialog1.Execute then
+     begin
+          sfile := OpenDialog1.FileName;
+     end;
+     edtAsmFile.Text := sfile;
+
+     if sFile = '' then Exit;
+
+     if not FileExists(sFile)  then
+     begin
+          ShowMessage('file : '+ sfile+ 'non trovato' );
+          Exit;
+     end;
+
+     if rgTipoSintax.ItemIndex = 0 then
+        CG := TCodeGen.Create
+     else
+        CG := TCodeGen.Create(MASM_SYNTAX);
+     CG.OnMsgLog     := ParserLogMsg;
+     try
+       CG.Assembly_File(sFile,AsmOut,StartOfs);
+
+       for j := 0 to High(AsmOut) do
+       begin
+           for i := 0 to High(AsmOut[j].Bytes) do
+           begin
+                SetLength(binArray,Length(binArray)+1);
+                binArray[High(binArray)] := AsmOut[j].Bytes[i];
+           end;
+       end;
+
+       Decompila(binArray,StartOfs,CG.Bits);
+     finally
+
+     end;
+
 end;
 
 procedure TfrmMain.btnAsmClick(Sender: TObject);

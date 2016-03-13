@@ -33,7 +33,7 @@ type
     public
        constructor Create;
        destructor  Destroy; override;
-       function    Parse_Line(pass: Integer; buffer: PAnsiChar; var res: TInsn): TInsn ;
+       function    Parse_Line(pass: Integer; buffer: PAnsiChar; var res: TInsn; ldef: TLDEF): TInsn ;
 
        property OnMsgLog  : TLogMsg     read FOnLogMsg     write FOnLogMsg;
        property Optimizing: Integer     read FOptimizing   write FOptimizing;
@@ -372,16 +372,18 @@ begin
 
 end;
 
-function  TParserNasm.Parse_line(pass: Integer; buffer: PAnsiChar; var res: TInsn): TInsn ;
+function  TParserNasm.Parse_line(pass: Integer; buffer: PAnsiChar; var res: TInsn; ldef: TLDEF): TInsn ;
 (******************************************************************************************)
 var
   hints         : eval_hints;
   opnum         : Integer;
   recover       : Boolean;
   i_Tok         : Integer ;      (* The t_type of tokval *)
-  slot,j        : Integer;
+  slot,j,
+  Critical      : Integer;
   pfx           : prefixes;
-  insn_is_label : Boolean;
+  insn_is_label,
+  first         : Boolean;
 
   op            : POperand ;
   value         : Aexpr ;        (* used most of the time *)
@@ -396,9 +398,11 @@ var
   n             : UInt64;
   rs            : opflags_t;
 
-  label fail;
+  label fail,restart_parse;
 begin
-    
+    insn_is_label   := False;
+
+ restart_parse:
     Res.forw_ref    := false;
     Res.llabel      := nil;  (* Assume no label *)
     Res.operands    := 0;    (* must initialize this *)
@@ -406,7 +410,7 @@ begin
     Res.evex_brerop := -1;   (* Reset EVEX broadcasting/ER op position *)
 
     FErrore         := 0;
-    insn_is_label   := False;
+    first           := True;
 
     FScanner.stdscan_reset();
     FScanner.stdscan_set(buffer);
@@ -421,40 +425,30 @@ begin
          goto fail;
     end;
 
-  (*{  if (i == TOKEN_ID || (insn_is_label && i == TOKEN_INSN)) {
-        /* there's a label here */
-        first = false;
-        result->label = tokval.t_charptr;
-        i = stdscan(NULL, &tokval);
-        if (i == ':') {         /* skip over the optional colon */
-            i = stdscan(NULL, &tokval);
-        } else if (i == 0) {
-            nasm_error(ERR_WARNING | ERR_WARN_OL | ERR_PASS1,
-                  "label alone on a line without a colon might be in error");
-        }
-        if (i != TOKEN_INSN || tokval.t_integer != I_EQU) {
-            /*
-             * FIXME: location->segment could be NO_SEG, in which case
-             * it is possible we should be passing 'abs_seg'. Look into this.
-             * Work out whether that is *really* what we should be doing.
-             * Generally fix things. I think this is right as it is, but
-             * am still not certain.
-             */
-            ldef(result->label, in_abs_seg ? abs_seg : location->segment,
-                 location->offset, NULL, true, false);
-        }
-    }
+    if (i_Tok = TOKEN_ID) or ((insn_is_label) and (i_Tok = TOKEN_INSN)) then
+    begin
+        (* there's a label here *)
+        first      := false;
+        Res.llabel := Ftokval_p.t_charptr;
+        i_Tok      := FScanner.stdscan(Ftokval_p);
+        (* skip over the optional colon *)
+        if (i_Tok = Ord(':')) then
+            i_Tok := FScanner.stdscan(Ftokval_p)
+        else if (i_Tok = TOKEN_EOS) then
+             DoLogMsg(ERR_WARNING or ERR_WARN_OL or ERR_PASS1, 'label alone on a line without a colon might be in error');
 
-    *)
+        if (i_Tok <> TOKEN_INSN) or (Ftokval_p.t_integer <> I_EQU) then
+             ldef(Res.llabel, NO_SEG,Location.offset);
+    end;
 
     (* Just a label here *)
     if (i_Tok = TOKEN_EOS) then goto fail;
 
     ZeroMemory(@Res.prefixes[0],sizeof(Res.prefixes[0])* Length(Res.prefixes));
 
-    while (i_Tok = TOKEN_PREFIX) {or ( (i_Tok = TOKEN_REG) and (IS_SREG(Ftokval_p.t_integer)) )} do
+    while (i_Tok = TOKEN_PREFIX)  do
     begin
-
+        first := False;
         slot := prefix_slot(Ftokval_p.t_integer);
         if (Res.prefixes[slot]) <> 0 then
         begin
@@ -485,6 +479,9 @@ begin
     Res.opcode    := Ftokval_p.t_integer;
     Res.condition := Ftokval_p.t_inttwo;
 
+    if pass = 2 then Critical := 2
+    else             Critical := 0;
+
     (*
      * Now we begin to parse the operands. There may be up to four
      * of these, separated by commas, and terminated by a zero token.
@@ -501,7 +498,13 @@ begin
         op^.decoflags := 0;
 
         i_Tok := FScanner.stdscan(Ftokval_p);
-        if (i_Tok = TOKEN_EOS) then   break; (* end of operands: get out of here *)
+        if (i_Tok = TOKEN_EOS) then Break    (* end of operands: get out of here *)
+        else if (first) and (i_Tok = Ord(':')) then
+        begin
+              insn_is_label := True;
+              goto restart_parse;
+        end;
+        first := False;
 
         op^.tipo := 0; (* so far, no override *)
 
@@ -596,7 +599,7 @@ begin
            (Res.opcode <> I_JMP) and (Res.opcode <> I_CALL) then
               DoLogMsg(ERR_NONFATAL, 'invalid use of FAR operand specifier');
 
-        value := evaluate(FScanner.stdscan, @Ftokval_p, op^.opflags, @hints);
+        value := evaluate(FScanner.stdscan, @Ftokval_p, op^.opflags,Critical, @hints);
         i_Tok := Ftokval_p.t_type;
         if (op^.opflags and OPFLAG_FORWARD) <> 0 then   Res.forw_ref := true;
 
@@ -623,7 +626,7 @@ begin
                 process_size_override(result, op^);
                 i_Tok := FScanner.stdscan(Ftokval_p);
             end;
-            value := evaluate(FScanner.stdscan, @Ftokval_p, op^.opflags, @hints);
+            value := evaluate(FScanner.stdscan, @Ftokval_p, op^.opflags, Critical, @hints);
             i_Tok := Ftokval_p.t_type;
 
             if (op^.opflags and OPFLAG_FORWARD) <> 0 then Res.forw_ref := true;
@@ -641,7 +644,7 @@ begin
             if parse_mref(o1, @value) <> 0 then goto fail;
 
             i_Tok     := FScanner.stdscan(Ftokval_p); (* Eat comma *)
-            value := evaluate(FScanner.stdscan, @Ftokval_p, op^.opflags, @hints);
+            value := evaluate(FScanner.stdscan, @Ftokval_p, op^.opflags, Critical, @hints);
             i_Tok     := Ftokval_p.t_type;
             if value = nil then goto fail;
 
@@ -691,7 +694,7 @@ begin
         begin
             if i_Tok <> Ord(']') then
             begin
-                DoLogMsg(ERR_NONFATAL, 'parser: expecting ]');
+                DoLogMsg(ERR_NONFATAL, 'expecting ]');
                 recover := true;
             end else             (* we got the required ] *)
             begin

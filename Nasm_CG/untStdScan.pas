@@ -156,6 +156,11 @@ begin
     (* we have a token; either an id, a number or a char *)
     if (isidstart(FStdscan_bufptr^)) then
     begin
+        // per label
+        if (FStdscan_bufptr^ = '@') then
+        begin
+            Inc(FStdscan_bufptr);
+        end;
 
         r := FStdscan_bufptr;
         Inc(FStdscan_bufptr);

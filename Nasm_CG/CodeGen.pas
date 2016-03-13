@@ -14,12 +14,156 @@
     64 bytes (512 bit): zword
 
  *)
+
+ (*
+ * code generation
+ *
+ * Bytecode specification
+ * ----------------------
+ *
+ *
+ * Codes(Octale)            Mnemonic        Explanation
+ *
+ * \0                                       terminates the code. (Unless it's a literal of course.)
+ * \1..\4                                   that many literal bytes follow in the code stream
+ * \5                                       add 4 to the primary operand number (b, low octdigit)
+ * \6                                       add 4 to the secondary operand number (a, middle octdigit)
+ * \7                                       add 4 to both the primary and the secondary operand number
+ * \10..\13                                 a literal byte follows in the code stream, to be added
+ *                                          to the register value of operand 0..3
+ * \14..\17                                 the position of index register operand in MIB (BND insns)
+ * \20..\23         ib                      a byte immediate operand, from operand 0..3
+ * \24..\27         ib,u                    a zero-extended byte immediate operand, from operand 0..3
+ * \30..\33         iw                      a word immediate operand, from operand 0..3
+ * \34..\37         iwd                     select between \3[0-3] and \4[0-3] depending on 16/32 bit
+ *                                          assembly mode or the operand-size override on the operand
+ * \40..\43         id                      a long immediate operand, from operand 0..3
+ * \44..\47         iwdq                    select between \3[0-3], \4[0-3] and \5[4-7]
+ *                                          depending on the address size of the instruction.
+ * \50..\53         rel8                    a byte relative operand, from operand 0..3
+ * \54..\57         iq                      a qword immediate operand, from operand 0..3
+ * \60..\63         rel16                   a word relative operand, from operand 0..3
+ * \64..\67         rel                     select between \6[0-3] and \7[0-3] depending on 16/32 bit
+ *                                          assembly mode or the operand-size override on the operand
+ * \70..\73         rel32                   a long relative operand, from operand 0..3
+ * \74..\77         seg                     a word constant, from the _segment_ part of operand 0..3
+ * \1ab                                     a ModRM, calculated on EA in operand a, with the spare
+ *                                          field the register value of operand b.
+ * \172\ab                                  the register number from operand a in bits 7..4, with
+ *                                          the 4-bit immediate from operand b in bits 3..0.
+ * \173\xab                                 the register number from operand a in bits 7..4, with
+ *                                          the value b in bits 3..0.
+ * \174..\177                               the register number from operand 0..3 in bits 7..4, and
+ *                                          an arbitrary value in bits 3..0 (assembled as zero.)
+ * \2ab                                     a ModRM, calculated on EA in operand a, with the spare
+ *                                          field equal to digit b.
+ *
+ * \240..\243                               this instruction uses EVEX rather than REX or VEX/XOP, with the
+ *                                          V field taken from operand 0..3.
+ * \250                                     this instruction uses EVEX rather than REX or VEX/XOP, with the
+ *                                          V field set to 1111b.
+ *
+ * EVEX prefixes are followed by the sequence:
+ * \cm\wlp\tup    where cm is:
+ *                  cc 000 0mm
+ *                  c = 2 for EVEX and m is the legacy escape (0f, 0f38, 0f3a)
+ *                and wlp is:
+ *                  00 wwl lpp
+ *                  [l0]  ll = 0 (.128, .lz)
+ *                  [l1]  ll = 1 (.256)
+ *                  [l2]  ll = 2 (.512)
+ *                  [lig] ll = 3 for EVEX.L'L don't care (always assembled as 0)
+ *
+ *                  [w0]  ww = 0 for W = 0
+ *                  [w1]  ww = 1 for W = 1
+ *                  [wig] ww = 2 for W don't care (always assembled as 0)
+ *                  [ww]  ww = 3 for W used as REX.W
+ *
+ *                  [p0]  pp = 0 for no prefix
+ *                  [60]  pp = 1 for legacy prefix 60
+ *                  [f3]  pp = 2
+ *                  [f2]  pp = 3
+ *
+ *                tup is tuple type for Disp8*N from %tuple_codes in insns.pl
+ *                    (compressed displacement encoding)
+ *
+ * \254..\257       id,s                        a signed 32-bit operand to be extended to 64 bits.
+ * \260..\263                                   this instruction uses VEX/XOP rather than REX, with the
+ *                                              V field taken from operand 0..3.
+ * \270                                         this instruction uses VEX/XOP rather than REX, with the
+ *                                              V field set to 1111b.
+ *
+ * VEX/XOP prefixes are followed by the sequence:
+ * \tmm\wlp        where mm is the M field; and wlp is:
+ *                 00 wwl lpp
+ *                 [l0]  ll = 0 for L = 0 (.128, .lz)
+ *                 [l1]  ll = 1 for L = 1 (.256)
+ *                 [lig] ll = 2 for L don't care (always assembled as 0)
+ *
+ *                 [w0]  ww = 0 for W = 0
+ *                 [w1 ] ww = 1 for W = 1
+ *                 [wig] ww = 2 for W don't care (always assembled as 0)
+ *                 [ww]  ww = 3 for W used as REX.W
+ *
+ * t = 0 for VEX (C4/C5), t = 1 for XOP (8F).
+ *
+ * \271             hlexr                       instruction takes XRELEASE (F3) with or without lock
+ * \272             hlenl                       instruction takes XACQUIRE/XRELEASE with or without lock
+ * \273             hle                         instruction takes XACQUIRE/XRELEASE with lock only
+ * \274..\277       ib,s                        a byte immediate operand, from operand 0..3, sign-extended
+ *                                              to the operand size (if o16/o32/o64 present) or the bit size
+ * \310             a16                         indicates fixed 16-bit address size, i.e. optional 0x67.
+ * \311             a32                         indicates fixed 32-bit address size, i.e. optional 0x67.
+ * \312             adf                         (disassembler only) invalid with non-default address size.
+ * \313             a64                         indicates fixed 64-bit address size, 0x67 invalid.
+ * \314             norexb                      (disassembler only) invalid with REX.B
+ * \315             norexx                      (disassembler only) invalid with REX.X
+ * \316             norexr                      (disassembler only) invalid with REX.R
+ * \317             norexw                      (disassembler only) invalid with REX.W
+ * \320             o16                         indicates fixed 16-bit operand size, i.e. optional 0x66.
+ * \321             o32                         indicates fixed 32-bit operand size, i.e. optional 0x66.
+ * \322             odf                         indicates that this instruction is only valid when the
+ *                                              operand size is the default (instruction to disassembler,
+ *                                              generates no code in the assembler)
+ * \323             o64nw                       indicates fixed 64-bit operand size, REX on extensions only.
+ * \324             o64                         indicates 64-bit operand size requiring REX prefix.
+ * \325             nohi                        instruction which always uses spl/bpl/sil/dil
+ * \326             nof3                        instruction not valid with 0xF3 REP prefix.  Hint for
+                                                disassembler only; for SSE instructions.
+ * \330                                         a literal byte follows in the code stream, to be added
+ *                                              to the condition code value of the instruction.
+ * \331             norep                       instruction not valid with REP prefix.  Hint for
+ *                                              disassembler only; for SSE instructions.
+ * \332             f2i                         REP prefix (0xF2 byte) used as opcode extension.
+ * \333             f3i                         REP prefix (0xF3 byte) used as opcode extension.
+ * \334             rex.l                       LOCK prefix used as REX.R (used in non-64-bit mode)
+ * \335             repe                        disassemble a rep (0xF3 byte) prefix as repe not rep.
+ * \336             mustrep                     force a REP(E) prefix (0xF3) even if not specified.
+ * \337             mustrepne                   force a REPNE prefix (0xF2) even if not specified.
+ *                                              \336-\337 are still listed as prefixes in the disassembler.
+ * \340             resb                        reserve <operand 0> bytes of uninitialized storage.
+ *                                              Operand 0 had better be a segmentless constant.
+ * \341             wait                        this instruction needs a WAIT "prefix"
+ * \360             np                          no SSE prefix (== \364\331)
+ * \361                                         66 SSE prefix (== \366\331)
+ * \364             !osp                        operand-size prefix (0x66) not permitted
+ * \365             !asp                        address-size prefix (0x67) not permitted
+ * \366                                         operand-size prefix (0x66) used as opcode extension
+ * \367                                         address-size prefix (0x67) used as opcode extension
+ * \370,\371        jcc8                        match only if operand 0 meets byte jump criteria.
+ *                  jmp8                        370 is used for Jcc, 371 is used for JMP.
+ * \373             jlen                        assemble 0x03 if bits==16, 0x05 if bits==32;
+ *                                              used for conditional jump over longer jump
+ * \374             vsibx|vm32x|vm64x           this instruction takes an XMM VSIB memory EA
+ * \375             vsiby|vm32y|vm64y           this instruction takes an YMM VSIB memory EA
+ * \376             vsibz|vm32z|vm64z           this instruction takes an ZMM VSIB memory EA
+ *)
 unit CodeGen;
 
 interface
 
      uses
-       System.SysUtils, windows, System.AnsiStrings,
+       System.SysUtils, windows, System.AnsiStrings, System.Classes,
        Parser,
        Nasm_Def,
        OpFlags;
@@ -36,12 +180,10 @@ type
  end;
  pItemplate = ^TItemplate;
 
- // ByteCode table
- {$I  '../Include/inst_ByteCode.inc'}
- // Instruction Table
- {$I  '../Include/inst_A.inc'}
- // Flag for Instruction table
- {$I  '../Include/iflaggen.inc'}
+
+ {$I  '../Include/inst_ByteCode.inc'}  (****ByteCode table****)
+ {$I  '../Include/inst_A.inc'}         (****Instruction Table****)
+ {$I  '../Include/iflaggen.inc'}       (****Flag for Instruction table****)
 
 
 Type
@@ -116,6 +258,7 @@ end;
 
       FCurrent_loc  : Uint64;       // tiene traccia della posizione attuale in FcodeBuffre
       FBytes_Written: UInt64;       // Numero di byte scritti
+      FDefaulOffset : UInt64;       // valore di Start offset di default
 
       FOnLogMsg     : TLogMsg;
 
@@ -172,43 +315,47 @@ end;
       procedure SetOptimizing(const Value: UInt64);
       procedure SetOnLogMsg(const Value: TLogMsg);
       function  InternalMasmToNam(sCmd: PAnsiChar):AnsiString;
-      function  Assemble_Array(const offsetStart:Int64;const pCmdAsm: TArray<AnsiString>;var vAssembled: TTAssembled): boolean;
+      function  Assemble_Array(const offsetStart:UInt64;const pCmdAsm: TArray<AnsiString>;var vAssembled: TTAssembled): boolean;
       function  insn_size(offset: Int64; bits: Integer; instruction: TInsn): Int64;
 
    public
       constructor Create(TipoSyntax : Integer = NASM_SYNTAX);
       destructor  Destroy; override;
       procedure   Reset;
+      function    Assembly_File(sFile: string; var vAssembled: TTAssembled; var StartOfs: UInt64): Boolean;
       function    Assemble(offset:Int64; bits : Integer; instruction: TInsn):int64;
       function    Assemble_Cmd(Address : Int64;sCmd: PAnsiChar; bits: Byte = 32 ):TOutCmdB ;
 
-      property OnMsgLog     : TLogMsg   read FOnLogMsg     write SetOnLogMsg;
-      property CodeBuffer   : TOutCmdB  read FCodeBuffer;
-      property Optimizing   : UInt64    read FOptimizing   write SetOptimizing;
-      property LenAsmBytes  : Cardinal  read FLenAsmBytes;
-      property Errore       : Integer   read FErrore;
+      property OnMsgLog    : TLogMsg     read FOnLogMsg     write SetOnLogMsg;
+      property CodeBuffer  : TOutCmdB    read FCodeBuffer;
+      property Optimizing  : UInt64      read FOptimizing   write SetOptimizing;
+      property LenAsmBytes : Cardinal    read FLenAsmBytes;
+      property DefaulOffset: UInt64      read FDefaulOffset write FDefaulOffset;
+      property Errore      : Integer     read FErrore;
+      property Bits        : Byte        read FBits;
 
  end;
 
 implementation
-        uses NasmLib;
+        uses NasmLib,
+             Labels;
 
 constructor TCodeGen.Create(TipoSyntax : Integer = NASM_SYNTAX);
 begin
     ResetBuffer;
-    FOptimizing :=  $3fffffff;
+    FOptimizing   := $3fffffff;
+    FDefaulOffset := $00400000;
 
     FParser := TParserNasm.Create;
 
     FTipoSyntax       := TipoSyntax;
 
-    FSegment          := -1;
+    FSegment          := NO_SEG;
     FBits             := 32;
     FParser.GlobalRel := DEF_REL;
     FLenAsmBytes      := 0;
 
-    FParser.Optimizing:= FOptimizing;
-
+    FParser.Optimizing       := FOptimizing;
 end;
 
 destructor TCodeGen.Destroy;
@@ -266,7 +413,7 @@ begin
 
      while sCmd^ <> #0 do
      begin
-	    if System.AnsiStrings.StrLIComp(sCmd, 'rip ', 3) = 0 then //caso rip
+        if System.AnsiStrings.StrLIComp(sCmd, 'rip ', 3) = 0 then //caso rip
         begin
             isRip := True;
         end
@@ -380,7 +527,7 @@ begin
           Inc(pTmp);
 
      end;
-     Result := stmp;
+     Result := LowerCase(stmp);
 
      //lods
      if Pos('lods',Result) > 0  then
@@ -440,6 +587,13 @@ begin
       FLenAsmBytes := 0;
       start        := offset;
       FBits        := bits;
+
+      //nel caso delle definizione delle label
+      if instruction.opcode = I_none then
+      begin
+           Result := 0;
+           Exit;
+      end;
 
       (* Check to see if we need an address-size prefix*)
       add_asp(instruction, bits);
@@ -574,7 +728,7 @@ begin
      if FTipoSyntax = MASM_SYNTAX then  line  := InternalMasmToNam(sCmd)
      else                               line  := sCmd ;
 
-     FParser.parse_line(1, @line[1], output_ins);
+     FParser.parse_line(1, @line[1], output_ins,nil);
 
      // errore parsing non trovato opcode o identificatore
      if (output_ins.opcode = - 1) or (FParser.Errore <> 0) then
@@ -589,77 +743,172 @@ begin
      Result := FCodeBuffer;
 
      if FErrore <> 0 then
-          MessageBox(0,'[CODEGEN]- Errore nella compilazione dell''Istruzione ','Attenzione',MB_OK)
-        //  raise Exception.Create('[CODEGEN]- Errore nella compilazione dell''Istruzione '+ '"'+string(line)+'"');
+         DoLogMsg(ERR_NONFATAL, 'Warning!! nella compilazione dell''Istruzione '+ '"'+string(line)+'"');
+         //  raise Exception.Create('[CODEGEN]- Errore nella compilazione dell''Istruzione '+ '"'+string(line)+'"');
 
 end;
 
-function TCodeGen.Assemble_Array(const offsetStart:Int64;const  pCmdAsm: TArray<AnsiString>; var vAssembled : TTAssembled):boolean;
+function TCodeGen.Assembly_File(sFile: string;var vAssembled : TTAssembled; var StartOfs: UInt64):Boolean;
 var
-  linea      : AnsiString;
-  output_ins : TInsn;
-  bits       : Byte;
-  x,Pass     : Integer;
-  l, offs    : Int64;
+  tx      : TStreamReader;
+  pCmdAsm : TArray<AnsiString>;
+  linea   : AnsiString;
+  pBits,
+  pComm   : Integer;
+  Ofs     : UInt64;
+begin
+     ofs   := $FFFFFFFF;
+     tx    := TStreamReader.Create(sFile);
+     try
+       ///file to array
+       SetLength(pCmdAsm,0);
+
+       while not tx.EndOfStream do
+       begin
+           linea := tx.ReadLine;
+           linea := StringReplace(linea, #9, ' ', [rfReplaceAll]);
+
+
+           pBits := Pos('bits',LowerCase(Linea));
+           pComm := Pos(';',LowerCase(Linea));
+
+           if ( pBits > 0) and( (pComm = 0) or ( (pComm > 0) and (pComm > pBits) ) ) then
+           begin
+                if      (Pos('64',LowerCase(Linea)) > 0) then FBits := 64
+                else if (Pos('32',LowerCase(Linea)) > 0) then FBits := 32
+                else if (Pos('16',LowerCase(Linea)) > 0) then FBits := 16
+                else begin
+                     DoLogMsg(ERR_NONFATAL,'errore nello specificare numero bits programma');
+                     Result := False;
+                     Exit;
+                end;
+
+                SetLength(pCmdAsm,Length(pCmdAsm)+1);
+                pCmdAsm[High(pCmdAsm)] := 'Bits '+ Inttostr(FBits);
+                Continue;
+           end;
+
+           if linea <> '' then
+             linea := nasm_skip_spaces(@linea[1]);
+
+           if Pos(';<',LowerCase(Linea)) > 0 then
+              ofs := StrToInt64('$'+ Copy(linea, 3, length(Linea)- 3));
+
+           if (linea = '') then   Continue;
+           if linea[1] = ';' then Continue;
+
+           SetLength(pCmdAsm,Length(pCmdAsm)+1);
+           pCmdAsm[High(pCmdAsm)] := linea;
+       end;
+     finally
+         tx.Free;
+     end;
+
+     if ofs = $FFFFFFFF then Ofs := FDefaulOffset;
+     StartOfs := Ofs;
+
+     Result :=  Assemble_Array(ofs,pCmdAsm,vAssembled) ;
+
+end;
+
+function TCodeGen.Assemble_Array(const offsetStart:UInt64;const  pCmdAsm: TArray<AnsiString>; var vAssembled : TTAssembled):boolean;
+var
+  linea       : AnsiString;
+  output_ins  : TInsn;
+  bits        : Byte;
+  x,Passn,Pass1,
+  Pass0       : Integer;
+  l, offs     : UInt64;
+  lDef        : TLDEF;
 
 begin
      bits  := FBits;
 
-     for pass := 1 to 3 do
-     begin
-          offs  := offsetStart;
-          Result:= False;
-         //def_label = passn > 1 ? redefine_label : define_label;
+     lab := TLab.Create;
+     try
+       Location.known   := False;
+       Location.segment := NO_SEG;
 
-         for x := 0 to  High(pCmdAsm) do
-         begin
-             linea := pCmdAsm[x];
+       Passn := 1;
+       Pass0 := 0;
+       repeat
+             SetLength(vAssembled,0);
+             offs  := offsetStart;
+             Result:= False;
 
-             if  Pos('bits',LowerCase(string(Linea))) > 0 then
+             if Pass0 = 2  then Pass1 := 2
+             else               Pass1 := 1;
+
+             if   Passn > 1  then lDef := lab.redefine_label
+             else                 lDef := lab.define_label;
+
+             if   Passn = 1 then Location.known := True;
+
+             Location.offset       := offs;
+             Global_offset_changed := 0;
+
+             for x := 0 to  High(pCmdAsm) do
              begin
-                  if      (Pos('64',LowerCase(string(Linea))) > 0) then bits := 64
-                  else if (Pos('32',LowerCase(string(Linea))) > 0) then bits := 32
-                  else if (Pos('16',LowerCase(string(Linea))) > 0) then bits := 16;
-                  Continue;
+                 linea := pCmdAsm[x];
+
+                 if  Pos('bits',LowerCase(string(Linea))) > 0 then
+                 begin
+                      if      (Pos('64',LowerCase(string(Linea))) > 0) then bits := 64
+                      else if (Pos('32',LowerCase(string(Linea))) > 0) then bits := 32
+                      else if (Pos('16',LowerCase(string(Linea))) > 0) then bits := 16;
+                      Continue;
+                 end;
+                 // reset
+                 FErrore            := 0;
+                 FParser.GlobalBits := bits;
+                 Reset;
+                 ZeroMemory(@output_ins,SizeOf(TInsn));
+
+                 if FTipoSyntax = MASM_SYNTAX then  linea  := InternalMasmToNam(@linea[1])
+                 else                               linea  := linea ;
+                 // parser linea
+                 //=============
+                 FParser.parse_line(Pass1, @linea[1], output_ins,lDef);
+
+                 // errore parsing non trovato opcode o identificatore
+                 if {(output_ins.opcode = - 1) or}(FParser.Errore <> 0) then
+                 begin
+                     if (output_ins.opcode = - 1) then
+                        raise Exception.Create('[PARSING]- Identificatore sconosciuto Istruzione '+ '"'+string(linea)+'"')
+                     else
+                        raise Exception.Create('[PARSING]- Errore nel parsing dell''Istruzione '+ '"'+string(linea)+'"')
+                 end;
+
+                 if Pass1 = 1 then
+                 begin
+                     l := insn_size(offs, bits, output_ins);
+                     if (l <> -1) then
+                         offs := offs + l;
+                 end else
+                 begin
+                       // assemble
+                       offs := offs + Assemble(offs, bits, output_ins);
+                       if FErrore <> 0 then
+                         DoLogMsg(ERR_NONFATAL, 'Warning!! nella compilazione dell''Istruzione '+ '"'+string(linea)+'"');
+
+                       Result := True;
+
+                       if Length(FCodeBuffer) > 0 then
+                       begin
+                           SetLength(vAssembled,Length(vAssembled)+1);
+                           vAssembled[High(vAssembled)].Address := offs - Length(FCodeBuffer);
+                           vAssembled[High(vAssembled)].Bytes   := FCodeBuffer;
+                       end;
+                 end;
+                 // Aggiorna offset
+                 Location.offset := offs;
              end;
-             // reset
-             FErrore            := 0;
-             FParser.GlobalBits := bits;
-             Reset;
-             ZeroMemory(@output_ins,SizeOf(TInsn));
 
-             if FTipoSyntax = MASM_SYNTAX then  linea  := InternalMasmToNam(@linea[1])
-             else                               linea  := linea ;
-             // parser
-             FParser.parse_line(1, @linea[1], output_ins);
-
-             // errore parsing non trovato opcode o identificatore
-             if (output_ins.opcode = - 1) or (FParser.Errore <> 0) then
-             begin
-                 if (output_ins.opcode = - 1) then
-                    raise Exception.Create('[PARSING]- Identificatore sconosciuto Istruzione '+ '"'+string(linea)+'"')
-                 else
-                    raise Exception.Create('[PARSING]- Errore nel parsing dell''Istruzione '+ '"'+string(linea)+'"')
-             end;
-
-             if pass = 1 then
-             begin
-                 l := insn_size(offs, bits, output_ins);
-                 if (l <> -1) then
-                     offs := offs + l;
-             end else
-             begin
-                   // assemble
-                   offs := offs + Assemble(offs, bits, output_ins);
-                   if FErrore <> 0 then
-                     raise Exception.Create('[CODEGEN]- Errore nella compilazione dell''Istruzione '+ '"'+string(linea)+'"');
-
-                   Result := True;
-                   SetLength(vAssembled,Length(vAssembled)+1);
-                   vAssembled[High(vAssembled)].Address := offs - Length(FCodeBuffer);
-                   vAssembled[High(vAssembled)].Bytes   := FCodeBuffer;
-             end;
-         end;
+             if ((passn > 1) and (Global_offset_changed = 0)) or (pass0 = 2) then Inc(Pass0);
+             inc(Passn);
+       until Pass0 > 2;
+     finally
+       lab.Free;
      end;
 end;
 
@@ -2382,7 +2631,7 @@ begin
         Exit;
     end;   *)
 
-    isize   := ins.oprs[0].offset - offset - isize; (* isize is delta *)
+    isize   := ins.oprs[0].offset - offset - isize;    (* isize is delta *)
     is_byte := (isize >= -128) and (isize <= 127);    (* is it byte size? *)
 
     if (is_byte = True)  and (c = $F9) and (ins.prefixes[PPS_REP] = P_BND)  then
@@ -3460,6 +3709,12 @@ var
   iSize    : Int64;
 
 begin
+      //nel caso delle definizione delle label
+      if instruction.opcode = I_none then
+      begin
+           Result := 0;
+           Exit;
+      end;
 
       (* Check to see if we need an address-size prefix*)
       add_asp(instruction, bits);

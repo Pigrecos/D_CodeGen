@@ -5,9 +5,9 @@ Assembly Code Generator(Compiler File or Single asm Command)
 * Porting Only Nasm Code Generator 
 * Using Nasm and Masm Syntax
 * Support all Nasm Instruction Set [List](http://www.nasm.us/doc/nasmdocb.html)
+* Labeling support and jcc size optimize
 
 ### TODO List ###
-* jcc label
 * Test code
 * and Much more
 

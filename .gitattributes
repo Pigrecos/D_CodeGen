@@ -1,2 +1,2 @@
-*.Include linguist-detectable=false
-*.inc linguist-detectable=false
+*.inc linguist-language=Pascal
+*.Asm linguist-language=Pascal

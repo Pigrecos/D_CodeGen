@@ -1,2 +1,6 @@
+# Some examples of various styles:
+vim: syntax=Pascal
+
+
 *.Include linguist-detectable=false
 *.inc linguist-detectable=false

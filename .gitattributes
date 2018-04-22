@@ -1,1 +1,3 @@
 *.inc linguist-language=Pascal
+
+*.inc linguist-generated=false

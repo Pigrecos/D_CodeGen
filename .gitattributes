@@ -1,1 +1,3 @@
 *.inc     diff=Pascal
+
+*.inc linguist-detectable=false

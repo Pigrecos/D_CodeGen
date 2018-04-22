@@ -1,5 +1,7 @@
 # DCodeGen
-Assembly Code Generator(Compiler File or Single asm Command)
+Binary Code generator Written in pascal.
+It can generate native code for x86 and x64 architectures and supports the whole x86/x64 instruction set.
+Assembly Code Generator able to compile single File or Single asm Command.
 
 * Porting of a part of the [Nasm -The Netwide Assembler](http://www.nasm.us/) in Delphi.
 * Porting Only Nasm Code Generator 

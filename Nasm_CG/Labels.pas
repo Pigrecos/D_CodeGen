@@ -36,9 +36,9 @@ type
    TLab = class
      private
        FInitialized : Boolean;
-       Flabels : array of TLabel;
-       FErrore    : Integer ;           (* <> 0 indica che si è generato un errorre*)
-       FOnLogMsg  : TLog;
+       Flabels      : array of TLabel;
+       FErrore      : Integer ;           (* <> 0 indica che si è generato un errorre*)
+       FOnLogMsg    : TLog;
 
        procedure DoLogMsg(Severity : Integer; strMsg : string);
        function find_label(llabel: PAnsiChar; Create: Boolean): PLabel;

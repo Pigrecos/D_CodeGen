@@ -181,9 +181,9 @@ type
  pItemplate = ^TItemplate;
 
 
- {$I  '../Include/inst_ByteCode.inc'}  (****ByteCode table****)
- {$I  '../Include/inst_A.inc'}         (****Instruction Table****)
- {$I  '../Include/iflaggen.inc'}       (****Flag for Instruction table****)
+ {$I  'Include/inst_ByteCode.inc'}  (****ByteCode table****)
+ {$I  'Include/inst_A.inc'}         (****Instruction Table****)
+ {$I  'Include/iflaggen.inc'}       (****Flag for Instruction table****)
 
 
 Type
@@ -317,22 +317,26 @@ end;
       function  InternalMasmToNam(sCmd: PAnsiChar):AnsiString;
       function  Assemble_Array(const offsetStart:UInt64;const pCmdAsm: TArray<AnsiString>;var vAssembled: TTAssembled): boolean;
       function  insn_size(offset: Int64; bits: Integer; instruction: TInsn): Int64;
+      function  Assemble(offset:Int64; bits : Integer; instruction: TInsn):int64;
+      procedure SetBits(const Value: Byte);
 
    public
-      constructor Create(TipoSyntax : Integer = NASM_SYNTAX);
+      constructor Create(Modo: Byte; TipoSyntax : Integer = NASM_SYNTAX);
       destructor  Destroy; override;
       procedure   Reset;
-      function    Assembly_File(sFile: string; var vAssembled: TTAssembled; var StartOfs: UInt64): Boolean;
-      function    Assemble(offset:Int64; bits : Integer; instruction: TInsn):int64;
-      function    Assemble_Cmd(Address : Int64;sCmd: PAnsiChar; bits: Byte = 32 ):TOutCmdB ;
+      function    Assembly_File(sFile: string; var vAssembled: TTAssembled; var StartOfs: UInt64): Boolean; overload;
+      function    Assembly_File(lstString: TStringList;var vAssembled : TTAssembled; var StartOfs: UInt64):Boolean; overload;
+
+      function    Pi_Asm(Address : Int64;sCmd: PAnsiChar ):Integer ; overload ;
+      function    Pi_Asm(sCmd: PAnsiChar):Integer ; overload;
 
       property OnMsgLog    : TLogMsg     read FOnLogMsg     write SetOnLogMsg;
-      property CodeBuffer  : TOutCmdB    read FCodeBuffer;
+      property Encode      : TOutCmdB    read FCodeBuffer;
       property Optimizing  : UInt64      read FOptimizing   write SetOptimizing;
-      property LenAsmBytes : Cardinal    read FLenAsmBytes;
+      property AsmSize     : Cardinal    read FLenAsmBytes;
       property DefaulOffset: UInt64      read FDefaulOffset write FDefaulOffset;
       property Errore      : Integer     read FErrore;
-      property Bits        : Byte        read FBits;
+      property Modo        : Byte        read FBits         write SetBits;
 
  end;
 
@@ -340,7 +344,7 @@ implementation
         uses NasmLib,
              Labels;
 
-constructor TCodeGen.Create(TipoSyntax : Integer = NASM_SYNTAX);
+constructor TCodeGen.Create(Modo: Byte; TipoSyntax : Integer = NASM_SYNTAX);
 begin
     ResetBuffer;
     FOptimizing   := $3fffffff;
@@ -351,7 +355,7 @@ begin
     FTipoSyntax       := TipoSyntax;
 
     FSegment          := NO_SEG;
-    FBits             := 32;
+    SetBits(Modo);
     FParser.GlobalRel := DEF_REL;
     FLenAsmBytes      := 0;
 
@@ -369,6 +373,21 @@ procedure TCodeGen.DoLogMsg(Severity : Integer; strMsg : string);
 begin
     FErrore := 1;
     if Assigned(FOnLogMsg) then  FOnLogMsg(Severity,'[CODEGEN] -'+strMsg);
+end;
+
+procedure TCodeGen.SetBits(const Value: Byte);
+var
+ bit : Byte;
+begin
+    bit := 0;
+    if      Value = 4 then  bit := PI_MODO_32
+    else if Value = 8 then  bit := PI_MODO_64
+    else                    bit := Value;
+
+    FBits := bit;
+
+    if (FBits <> PI_MODO_32) and (FBits <> PI_MODO_64) then
+      raise Exception.Create('Modo Compilatore non supportatato');
 end;
 
 procedure TCodeGen.SetOnLogMsg(const Value: TLogMsg);
@@ -399,14 +418,12 @@ end;
 
 function TCodeGen.InternalMasmToNam(sCmd: PAnsiChar):AnsiString;
 var
-  //len : Integer;
-  stmp,stmp1     : AnsiString;
-  pTmp    : PAnsiChar;
+  stmp,stmp1 : AnsiString;
+  pTmp       : PAnsiChar;
   isLea,
-  isRip   : Boolean;
+  isRip      : Boolean;
 
 begin
-     //len  :=  System.AnsiStrings.StrLen(sCmd);
      stmp := '';
      isLea:= False;
      isRip:= False;
@@ -569,7 +586,19 @@ begin
           else if Pos('qword',Result) > 0  then Result := 'cmpsq'
           else if Pos('word',Result) > 0  then Result := 'cmpsw'
      end;
-
+     //movabs
+     if Pos('movabs',Result) > 0  then
+     begin
+         Result := StringReplace(Result,'movabs','mov',[rfReplaceAll])
+     end;
+     if Pos('pushal',Result) > 0  then
+     begin
+           Result := StringReplace(Result,'pushal','pushad',[rfReplaceAll])
+     end;
+     if Pos('popal',Result) > 0  then
+     begin
+           Result := StringReplace(Result,'popal','popad',[rfReplaceAll])
+     end;
 
 end;
 
@@ -713,15 +742,14 @@ begin
 
 end;
 
-
-function TCodeGen.Assemble_Cmd(Address : Int64;sCmd: PAnsiChar; bits: Byte = 32 ):TOutCmdB ;
+function TCodeGen.Pi_Asm(Address : Int64;sCmd: PAnsiChar):Integer ;
 var
     line       : AnsiString;
     output_ins : TInsn;
 
 begin
      FErrore            := 0;
-     FParser.GlobalBits := bits;
+     FParser.GlobalBits := FBits;
      Reset;
      ZeroMemory(@output_ins,SizeOf(TInsn));
 
@@ -739,12 +767,91 @@ begin
             raise Exception.Create('[PARSING]- Errore nel parsing dell''Istruzione '+ '"'+string(line)+'"')
      end;
 
-     Assemble(Address, bits, output_ins);
-     Result := FCodeBuffer;
+     Assemble(Address, FBits, output_ins);
+     Result := FLenAsmBytes;
 
      if FErrore <> 0 then
          DoLogMsg(ERR_NONFATAL, 'Warning!! nella compilazione dell''Istruzione '+ '"'+string(line)+'"');
          //  raise Exception.Create('[CODEGEN]- Errore nella compilazione dell''Istruzione '+ '"'+string(line)+'"');
+
+end;
+
+function TCodeGen.Pi_Asm(sCmd: PAnsiChar):Integer ;
+begin
+     Result := Pi_Asm(0,sCmd)
+end;
+
+function TCodeGen.Assembly_File(lstString: TStringList;var vAssembled : TTAssembled; var StartOfs: UInt64):Boolean;
+var
+  nCount  : Integer;
+  pCmdAsm : TArray<AnsiString>;
+  linea   : AnsiString;
+  pBits,
+  pComm   : Integer;
+  Ofs     : UInt64;
+begin
+     ofs   := $FFFFFFFF;
+
+     try
+       ///file to array
+       SetLength(pCmdAsm,0);
+       nCount := 0;
+       while nCount <= (lstString.Count - 1) do
+       begin
+           linea := lstString[nCount];
+           linea := StringReplace(linea, #9, ' ', [rfReplaceAll]);
+
+           pBits := Pos('bits',LowerCase(Linea));
+           pComm := Pos(';',LowerCase(Linea));
+
+           if ( pBits > 0) and( (pComm = 0) or ( (pComm > 0) and (pComm > pBits) ) ) then
+           begin
+                if      (Pos('64',LowerCase(Linea)) > 0) then FBits := 64
+                else if (Pos('32',LowerCase(Linea)) > 0) then FBits := 32
+                else if (Pos('16',LowerCase(Linea)) > 0) then FBits := 16
+                else begin
+                     DoLogMsg(ERR_NONFATAL,'errore nello specificare numero bits programma');
+                     Result := False;
+                     Exit;
+                end;
+
+                SetLength(pCmdAsm,Length(pCmdAsm)+1);
+                pCmdAsm[High(pCmdAsm)] := 'Bits '+ Inttostr(FBits);
+
+                Inc(nCount);
+                Continue;
+           end;
+
+           if linea <> '' then
+             linea := nasm_skip_spaces(@linea[1]);
+
+           if Pos(';<',LowerCase(Linea)) > 0 then
+              ofs := StrToUInt64('$'+ Copy(linea, 3, length(Linea)- 3));
+
+           if (linea = '') then
+           begin
+                Inc(nCount);
+                Continue;
+           end;
+           if linea[1] = ';' then
+           begin
+               Inc(nCount);
+               Continue;
+           end;
+
+           SetLength(pCmdAsm,Length(pCmdAsm)+1);
+           pCmdAsm[High(pCmdAsm)] := linea;
+
+           Inc(nCount);
+       end;
+     finally
+
+     end;
+
+     if ofs = $FFFFFFFF then Ofs := FDefaulOffset;
+     StartOfs := Ofs;
+
+     Result :=  Assemble_Array(ofs,pCmdAsm,vAssembled) ;
 
 end;
 
@@ -792,7 +899,7 @@ begin
              linea := nasm_skip_spaces(@linea[1]);
 
            if Pos(';<',LowerCase(Linea)) > 0 then
-              ofs := StrToInt64('$'+ Copy(linea, 3, length(Linea)- 3));
+              ofs := StrToUInt64('$'+ Copy(linea, 3, length(Linea)- 3));
 
            if (linea = '') then   Continue;
            if linea[1] = ';' then Continue;

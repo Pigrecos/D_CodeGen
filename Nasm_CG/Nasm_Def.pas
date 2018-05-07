@@ -12,6 +12,9 @@ const
   NO_SEG      = -1;             (* null segment value *)
   SEG_ABS     = $40000000;      (* mask for far-absolute segments *)
 
+  PI_MODO_32  = 32;
+  PI_MODO_64  = 64;
+
 type
   decoflags_t = UInt16;
   opflags_t   = UInt64;
@@ -133,14 +136,14 @@ const
    MAX_KEYWORD      = 16;
 
    // Array Indicew registri
-   nasm_reg_flags : array[0..240] of UInt64 = ( {$I  '../Include/RegFlags.inc'}
+   nasm_reg_flags : array[0..240] of UInt64 = ( {$I  'Include/RegFlags.inc'}
 
    // Array Indice istruzione
-   {$I '../Include/inst_Idx.inc'}
+   {$I 'Include/inst_Idx.inc'}
    // Array Indice Registri
-   {$I '../Include/regs.inc'}
+   {$I 'Include/regs.inc'}
 
-   {$I '../Include/regvals.inc'}
+   {$I 'Include/regvals.inc'}
 
 
 (*
@@ -413,7 +416,7 @@ type
 
  TLDEF = Reference to procedure(llabel: PAnsiChar; segment: int32; offset: UInt64);
 
- TOutCmdB = array of Byte;
+ TOutCmdB = TArray<Byte>;
  type
   TAssembled = record                // struttura per singola istruzione
     Address: Cardinal;               // Indirizzo Istruzione

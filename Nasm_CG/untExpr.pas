@@ -559,7 +559,7 @@ end;
 function expr5(Critical: Integer): Aexpr;
 var
   e, f : Aexpr;
-  j    : Integer;
+
 begin
 
     e := expr6(Critical);
@@ -570,7 +570,6 @@ begin
     end;
     while (i_Tok = ord('*')) do
     begin
-        j     := i_Tok;
         i_Tok := scan(tokval_ex^);
         f     := expr6(Critical);
         if Length(f) = 0 then

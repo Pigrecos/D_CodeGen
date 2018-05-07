@@ -305,7 +305,6 @@ begin
      * $<string>		(hexadecimal)
      * <string><radix-letter>
      *)
-    sradix := 0;
     slen   := 0;
     plen   := slen;
 

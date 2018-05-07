@@ -643,7 +643,7 @@ begin
 
             if parse_mref(o1, @value) <> 0 then goto fail;
 
-            i_Tok     := FScanner.stdscan(Ftokval_p); (* Eat comma *)
+            //i_Tok     := FScanner.stdscan(Ftokval_p); (* Eat comma *)
             value := evaluate(FScanner.stdscan, @Ftokval_p, op^.opflags, Critical, @hints);
             i_Tok     := Ftokval_p.t_type;
             if value = nil then goto fail;

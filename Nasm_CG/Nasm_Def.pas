@@ -419,7 +419,7 @@ type
  TOutCmdB = TArray<Byte>;
  type
   TAssembled = record                // struttura per singola istruzione
-    Address: Cardinal;               // Indirizzo Istruzione
+    Address: UInt64;               // Indirizzo Istruzione
     Bytes  : TOutCmdB;               // Byte dell'istruzione
 end;
 TTAssembled = array of TAssembled;

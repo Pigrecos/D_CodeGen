@@ -430,7 +430,7 @@ begin
 
      while sCmd^ <> #0 do
      begin
-        if System.AnsiStrings.StrLIComp(sCmd, 'rip ', 3) = 0 then //caso rip
+        if System.AnsiStrings.StrLIComp(sCmd, 'rip', 3) = 0 then //caso rip
         begin
             isRip := True;
         end
@@ -492,7 +492,7 @@ begin
      end;
      // rip support
      if isRip then
-       stmp := StringReplace(stmp,'rip ','rel ',[rfReplaceAll]);
+       stmp := StringReplace(stmp,'rip','rel',[rfReplaceAll]);
 
      pTmp := PAnsiChar(AnsiString(stmp)) ;
      stmp1:= '';
@@ -943,7 +943,7 @@ begin
              offs  := offsetStart;
              Result:= False;
 
-             if Pass0 = 2  then Pass1 := 2
+             if Pass0 = 4  then Pass1 := 4
              else               Pass1 := 1;
 
              if   Passn > 1  then lDef := lab.redefine_label
@@ -1011,9 +1011,9 @@ begin
                  Location.offset := offs;
              end;
 
-             if ((passn > 1) and (Global_offset_changed = 0)) or (pass0 = 2) then Inc(Pass0);
+             if ((passn > 1) and (Global_offset_changed = 0)) {or (pass0 = 4) }then Inc(Pass0);
              inc(Passn);
-       until Pass0 > 2;
+       until Pass0 > 4;
      finally
        lab.Free;
      end;
